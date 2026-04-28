@@ -227,7 +227,7 @@ int main(int argc, char **argv){
 
         pthread_t tid;
         pthread_create(&tid, NULL, client_handler, &curr_client_info);
-        pthread_detach(tid);  
+        pthread_detach(tid);
     }
 
     free(clients);
