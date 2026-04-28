@@ -30,7 +30,7 @@ typedef struct {
     int is_connected; // 1 if yes, 0 if no --> when we traverse list we only look at clients that are connected
 } Client;
 
-typedef struct {
+typedef struct { // information we can pass to the function that handles clients
     int *client_fd;
     struct Client *client;
 } Handle_Client;
