@@ -14,7 +14,6 @@
 #define ERROR_TOO_LONG 4
 #define PORT 8000
 
-
 typedef struct {
     int protocol;
     char message_code[4];
@@ -34,6 +33,11 @@ typedef struct { // information we can pass to the function that handles clients
     int *client_fd;
     struct Client *client;
 } Handle_Client;
+
+Client *clients = NULL;
+int total_clients = 0;
+pthread_mutex_t my_lock = PTHREAD_MUTEX_INITIALIZER;
+
 
 //reads the fields
 //include error checking with buff size 
@@ -129,13 +133,35 @@ int split_fields(char *body, char **fields, int max_fields) {
     return count; 
 }
 
+// returns the pointer to the client you are searching for or NULL if client is not found  
+Client* client_search(char client_name[]){
+    Client client;
+    for(int i=0; i<total_clients; i++){
+        Client temp = clients[total_clients];
+        if(temp.is_connected == 1){
+            if(strcmp(temp.name,client_name) == 0){
+                return &temp;
+            }
+        }
+    }
 
+    return NULL;
+}
 
+// sends message to all clients that are currently connected
+void send_all(char message[]){
+    pthread_mutex_lock(&my_lock);
 
-pthread_mutex_t my_lock = PTHREAD_MUTEX_INITIALIZER;
+    for(int i=0; i<total_clients; i++){
+        Client temp = clients[i];
+        if(temp.is_connected == 1){
+            // put write() with the message we want to send
+        }
+    }
 
-Client *clients = NULL;
-int total_clients = 0;
+    pthread_mutex_unlock(&my_lock);
+}
+
 
 void client_handler(void *arg) {
     Handle_Client *client_info = (Handle_Client*) arg;
