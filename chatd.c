@@ -210,14 +210,14 @@ int valid_message(const char *s){
 //handles NAM - pick a screen name
 void handle_nam(int my_index, char *body){
     pthread_mutex_lock(&my_lock);
-    int my_fd = clients[my_index].fd;
+    int fd = clients[my_index].fd;
 
     int err = valid_name(body);
     if(err >= 0){
         if(err == ERROR_TOO_LONG){
-            send_error(my_fd, err, "Too long");
+            send_error(fd, err, "Too long");
         } else {
-            send_error(my_fd, err, "Illegal character");
+            send_error(fd, err, "Illegal character");
         }
         pthread_mutex_unlock(&my_lock);
         return;
@@ -227,7 +227,7 @@ void handle_nam(int my_index, char *body){
     for(int i = 0; i < total_clients; i++){
         if(i == my_index) continue;
         if(clients[i].is_connected == 1 && clients[i].has_name == 1 && strcmp(clients[i].name, body) == 0){
-            send_error(my_fd, ERROR_NAME_IN_USE, "Name in use");
+            send_error(fd, ERROR_NAME_IN_USE, "Name in use");
             pthread_mutex_unlock(&my_lock);
             return;
         }
@@ -235,7 +235,7 @@ void handle_nam(int my_index, char *body){
     strcpy(clients[my_index].name, body);
     clients[my_index].has_name = 1;
 
-    send_message(my_fd, "#all", clients[my_index].name, "Welcome to the chat!");
+    send_message(fd, "#all", clients[my_index].name, "Welcome to the chat!");
     pthread_mutex_unlock(&my_lock);
 }
 
@@ -243,14 +243,14 @@ void handle_nam(int my_index, char *body){
 //handles SET - update status, broadcast if non-empty
 void handle_set(int my_index, char *body){
     pthread_mutex_lock(&my_lock);
-    int my_fd = clients[my_index].fd;
+    int fd = clients[my_index].fd;
 
     int err = valid_status(body);
     if(err >= 0){
         if(err == ERROR_TOO_LONG){
-            send_error(my_fd, err, "Too long");
+            send_error(fd, err, "Too long");
         } else {
-            send_error(my_fd, err, "Illegal character");
+            send_error(fd, err, "Illegal character");
         }
         pthread_mutex_unlock(&my_lock);
         return;
@@ -271,12 +271,12 @@ void handle_set(int my_index, char *body){
 //handles MSG - forward to one user or broadcast to #all
 void handle_msg(int my_index, char *body){
     pthread_mutex_lock(&my_lock);
-    int my_fd = clients[my_index].fd;
+    int fd = clients[my_index].fd;
 
     char *fields[3];
     int n = split_fields(body, fields, 3);
     if(n < 3){
-        send_error(my_fd, ERROR_UNREADABLE, "Unreadable");
+        send_error(fd, ERROR_UNREADABLE, "Unreadable");
         pthread_mutex_unlock(&my_lock);
         return;
     }
@@ -287,9 +287,9 @@ void handle_msg(int my_index, char *body){
     int err = valid_message(text);
     if(err >= 0){
         if(err == ERROR_TOO_LONG){
-            send_error(my_fd, err, "Too long");
+            send_error(fd, err, "Too long");
         } else {
-            send_error(my_fd, err, "Illegal character");
+            send_error(fd, err, "Illegal character");
         }
         pthread_mutex_unlock(&my_lock);
         return;
@@ -300,7 +300,7 @@ void handle_msg(int my_index, char *body){
     } else {
         int idx = client_search(recipient);
         if(idx < 0){
-            send_error(my_fd, ERROR_UNKNOWN_RECIPIENT, "Unknown recipient");
+            send_error(fd, ERROR_UNKNOWN_RECIPIENT, "Unknown recipient");
         } else {
             send_message(clients[idx].fd, clients[my_index].name, recipient, text);
         }
@@ -312,7 +312,7 @@ void handle_msg(int my_index, char *body){
 //handles WHO - report on a single user or list everyone in #all
 void handle_who(int my_index, char *body){
     pthread_mutex_lock(&my_lock);
-    int my_fd = clients[my_index].fd;
+    int fd = clients[my_index].fd;
 
     if(strcmp(body, "#all") == 0){
         //walk every connected named user, glue together with \n
@@ -330,14 +330,14 @@ void handle_who(int my_index, char *body){
                 }
             }
         }
-        send_message(my_fd, "#all", clients[my_index].name, buf);
+        send_message(fd, "#all", clients[my_index].name, buf);
         pthread_mutex_unlock(&my_lock);
         return;
     }
 
     int idx = client_search(body);
     if(idx < 0){
-        send_error(my_fd, ERROR_UNKNOWN_RECIPIENT, "Unknown recipient");
+        send_error(fd, ERROR_UNKNOWN_RECIPIENT, "Unknown recipient");
         pthread_mutex_unlock(&my_lock);
         return;
     }
@@ -348,7 +348,7 @@ void handle_who(int my_index, char *body){
     } else {
         strcpy(text, "No status");
     }
-    send_message(my_fd, "#all", clients[my_index].name, text);
+    send_message(fd, "#all", clients[my_index].name, text);
     pthread_mutex_unlock(&my_lock);
 }
 
