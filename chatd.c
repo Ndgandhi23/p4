@@ -108,8 +108,8 @@ int fill_message(int fd, Message *message){
 
 
 
-//writes in format - caller must hold my_lock so writes dont interleave
-//had to bump buffer up since WHO #all responses can blow past 200
+//writes in format
+//had to bump buffer way up since WHO #all responses can blow past 200
 void send_message(int fd, const char *sender, const char *recipient, const char *body){
     char message[100010];
 
@@ -121,11 +121,8 @@ void send_message(int fd, const char *sender, const char *recipient, const char 
 }
 
 //this makes an error message that will be sent to client
-//caller must hold my_lock
 void send_error(int fd, int error_code, const char *explanation) {
     char message[200];
-
-    //snprintf with NULL,0 gives the length without writing - found this online
     int body_length = snprintf(NULL, 0, "%d|%s|", error_code, explanation);
     int n = snprintf(message, sizeof(message), "1|ERR|%d|%d|%s|", body_length, error_code, explanation);
     write(fd, message, n);
@@ -147,7 +144,6 @@ int split_fields(char *body, char **fields, int max_fields) {
 }
 
 //returns the index in clients[] or -1 if not found
-//caller must hold my_lock
 int client_search(const char *client_name){
     for(int i = 0; i < total_clients; i++){
         if(clients[i].is_connected == 1 && clients[i].has_name == 1){
@@ -160,7 +156,6 @@ int client_search(const char *client_name){
 }
 
 //sends a MSG to every connected client that has a name
-//caller must hold my_lock
 void send_all(const char *sender, const char *recipient, const char *body){
     for(int i = 0; i < total_clients; i++){
         if(clients[i].is_connected == 1 && clients[i].has_name == 1){
@@ -170,16 +165,13 @@ void send_all(const char *sender, const char *recipient, const char *body){
 }
 
 
-//validation helpers - return -1 if ok, otherwise the error code to send
-
 //name: 1-32 chars, letters/digits/-/_
 int valid_name(const char *s){
     int len = strlen(s);
-    if(len < 1) return ERROR_ILLEGAL_CHARACTER; //empty name not allowed
+    if(len < 1) return ERROR_ILLEGAL_CHARACTER;
     if(len > MAX_NAME_LEN) return ERROR_TOO_LONG;
     for(int i = 0; i < len; i++){
         char c = s[i];
-        //had to cast to unsigned char for isalnum, otherwise undefined behavior on negative chars
         if(!(isalnum((unsigned char)c) || c == '-' || c == '_')){
             return ERROR_ILLEGAL_CHARACTER;
         }
@@ -216,7 +208,6 @@ int valid_message(const char *s){
 
 
 //handles NAM - pick a screen name
-//holds my_lock the whole time so no concurrent writes to our fd
 void handle_nam(int my_index, char *body){
     pthread_mutex_lock(&my_lock);
     int my_fd = clients[my_index].fd;
@@ -362,7 +353,7 @@ void handle_who(int my_index, char *body){
 }
 
 
-//helper for sending fatal err 0 from client_handler before bailing out
+//locks before send_error, used for the err 0 paths in client_handler
 void send_fatal_error(int fd){
     pthread_mutex_lock(&my_lock);
     send_error(fd, ERROR_UNREADABLE, "Unreadable");
@@ -370,15 +361,12 @@ void send_fatal_error(int fd){
 }
 
 
-//thread function - one per connected client
-//arg is a malloc'd int holding our index into clients[]
+//runs as a thread for each connected client
 void *client_handler(void *arg) {
     int my_index = *((int*)arg);
     free(arg);
 
-    pthread_mutex_lock(&my_lock);
     int fd = clients[my_index].fd;
-    pthread_mutex_unlock(&my_lock);
 
     while(1){
         Message message;
@@ -449,12 +437,12 @@ int main(int argc, char **argv){
     }
     int port = atoi(argv[1]);
 
-    //ignore SIGPIPE so a dead client cant kill the server when we write to it
+    //ignore SIGPIPE so a dead client doesnt kill the server
     signal(SIGPIPE, SIG_IGN);
 
     int fd = socket(AF_INET, SOCK_STREAM, 0); // the class notes say this is ipv4 connection
 
-    //SO_REUSEADDR so we can restart the server right away without TIME_WAIT issues
+    //SO_REUSEADDR so we dont get "address in use" when restarting
     int yes = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
@@ -493,7 +481,6 @@ int main(int argc, char **argv){
 
         pthread_mutex_unlock(&my_lock);
 
-        //pass index on the heap so it survives until the thread reads it
         int *arg = malloc(sizeof(int));
         *arg = my_index;
 
