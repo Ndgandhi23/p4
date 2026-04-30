@@ -14,6 +14,7 @@
 #define ERROR_UNKNOWN_RECIPIENT 2
 #define ERROR_ILLEGAL_CHARACTER 3
 #define ERROR_TOO_LONG 4
+#define ERROR_OTHERS 5
 
 #define MAX_NAME_LEN 32
 #define MAX_STATUS_LEN 64
@@ -47,6 +48,7 @@ int fill_message_helper(int fd, char *buf, int buf_size){
     int i = 0;
     //switched from while(read(fd, &c, 1) > 0) because we need to report -1
     while(1){
+        // printf("in while. i = %d\n",i);
         int n = read(fd, &c, 1);
         if(n < 1){
             return -1;
@@ -61,6 +63,7 @@ int fill_message_helper(int fd, char *buf, int buf_size){
     }
     buf[i] = '\0';
     return i;
+
 }
 //read message off socket and fills Message struct.
 //fd is the socket to read from
@@ -102,7 +105,14 @@ int fill_message(int fd, Message *message){
         }
         total_bytes += n;
     }
+
     message->body[message->body_length] = '\0';
+
+    if(message->body[message->body_length-1] != '|'){
+        free(message->body);
+        message->body = NULL;
+        return -1;  
+    }
     return 0;
 }
 
@@ -209,6 +219,7 @@ int valid_message(const char *s){
 
 //handles NAM - pick a screen name
 void handle_nam(int my_index, char *body){
+    printf("in handle_name\n");
     pthread_mutex_lock(&my_lock);
     int fd = clients[my_index].fd;
 
@@ -242,6 +253,7 @@ void handle_nam(int my_index, char *body){
 
 //handles SET - update status, broadcast if non-empty
 void handle_set(int my_index, char *body){
+    printf("in handle_set\n");
     pthread_mutex_lock(&my_lock);
     int fd = clients[my_index].fd;
 
@@ -270,6 +282,7 @@ void handle_set(int my_index, char *body){
 
 //handles MSG - forward to one user or broadcast to #all
 void handle_msg(int my_index, char *body){
+    printf("in handle_msg\n");
     pthread_mutex_lock(&my_lock);
     int fd = clients[my_index].fd;
 
@@ -286,6 +299,7 @@ void handle_msg(int my_index, char *body){
 
     int err = valid_message(text);
     if(err >= 0){
+        printf("error in sending message\n");
         if(err == ERROR_TOO_LONG){
             send_error(fd, err, "Too long");
         } else {
@@ -297,7 +311,8 @@ void handle_msg(int my_index, char *body){
 
     if(strcmp(recipient, "#all") == 0){
         send_all(clients[my_index].name, "#all", text);
-    } else {
+    } 
+    else {
         int idx = client_search(recipient);
         if(idx < 0){
             send_error(fd, ERROR_UNKNOWN_RECIPIENT, "Unknown recipient");
@@ -311,6 +326,7 @@ void handle_msg(int my_index, char *body){
 
 //handles WHO - report on a single user or list everyone in #all
 void handle_who(int my_index, char *body){
+    printf("in handle_who\n");
     pthread_mutex_lock(&my_lock);
     int fd = clients[my_index].fd;
 
@@ -360,6 +376,25 @@ void send_fatal_error(int fd){
     pthread_mutex_unlock(&my_lock);
 }
 
+void print_message(Message *msg) {
+    if (msg == NULL) return;
+
+    printf("--- Message Details ---\n");
+    printf("Protocol:    %d\n", msg->protocol);
+    
+    // Using %.4s because message_code might not be null-terminated
+    printf("Code:        %.4s\n", msg->message_code);
+    
+    printf("Length:      %d\n", msg->body_length);
+    
+    // Only print the body if it's not a NULL pointer
+    if (msg->body != NULL) {
+        printf("Body:        %s\n", msg->body);
+    } else {
+        printf("Body:        (empty)\n");
+    }
+    printf("-----------------------\n");
+}
 
 //runs as a thread for each connected client
 void *client_handler(void *arg) {
@@ -367,6 +402,7 @@ void *client_handler(void *arg) {
     free(arg);
 
     int fd = clients[my_index].fd;
+    printf("in client handler\n");
 
     while(1){
         Message message;
@@ -385,29 +421,38 @@ void *client_handler(void *arg) {
         //spec says every message ends with | so if its missing thats err 0
         if(message.body_length > 0 && message.body[message.body_length - 1] == '|'){
             message.body[message.body_length - 1] = '\0';
-        } else {
+        } 
+        else {
             send_fatal_error(fd);
             free(message.body);
             break;
         }
+
+        print_message(&message);
 
         //need a name first - only NAM allowed before that
         pthread_mutex_lock(&my_lock);
         int has_name = clients[my_index].has_name;
         pthread_mutex_unlock(&my_lock);
+
+
         if(has_name == 0 && strcmp(message.message_code, "NAM") != 0){
-            send_fatal_error(fd);
-            free(message.body);
-            break;
+            pthread_mutex_lock(&my_lock);
+            send_error(fd, 5, "NAM needs to be set before anything");
+            pthread_mutex_unlock(&my_lock);
         }
 
         if(strcmp(message.message_code, "NAM") == 0){
+            printf("In NAM if statement\n");
             handle_nam(my_index, message.body);
         } else if(strcmp(message.message_code, "SET") == 0){
+            printf("In SET if statement\n");
             handle_set(my_index, message.body);
         } else if(strcmp(message.message_code, "MSG") == 0){
+            printf("In MSG if statement\n");
             handle_msg(my_index, message.body);
         } else if(strcmp(message.message_code, "WHO") == 0){
+            printf("In WHO if statement\n");
             handle_who(my_index, message.body);
         } else {
             //unknown code is fatal
@@ -420,7 +465,7 @@ void *client_handler(void *arg) {
     }
 
     close(fd);
-
+    printf("connection with %d closed\n",fd);
     pthread_mutex_lock(&my_lock);
     clients[my_index].is_connected = 0;
     pthread_mutex_unlock(&my_lock);
@@ -435,6 +480,7 @@ int main(int argc, char **argv){
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
         return -1;
     }
+
     int port = atoi(argv[1]);
 
     //ignore SIGPIPE so a dead client doesnt kill the server
@@ -455,11 +501,10 @@ int main(int argc, char **argv){
         perror("bind");
         return -1;
     }
-    listen(fd, 10); // pick a port to listen on
-
+    listen(fd, 10); 
     while (1) {
         int client_fd = accept(fd, NULL, NULL);
-
+        printf("Connected with client %d\n",client_fd);
         pthread_mutex_lock(&my_lock);
 
         total_clients++;
