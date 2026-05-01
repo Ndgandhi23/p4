@@ -14,6 +14,7 @@
 #define ERROR_UNKNOWN_RECIPIENT 2
 #define ERROR_ILLEGAL_CHARACTER 3
 #define ERROR_TOO_LONG 4
+#define ERROR_OTHERS 5
 
 #define MAX_NAME_LEN 32
 #define MAX_STATUS_LEN 64
@@ -411,9 +412,11 @@ void *client_handler(void *arg) {
         int has_name = clients[my_index].has_name;
         pthread_mutex_unlock(&my_lock);
         if(has_name == 0 && strcmp(message.message_code, "NAM") != 0){
-            send_fatal_error(fd);
+            pthread_mutex_lock(&my_lock);
+            send_error(fd, ERROR_OTHERS, "NAM needs to be set before anything");
+            pthread_mutex_unlock(&my_lock);
             free(message.body);
-            break;
+            continue;
         }
 
         int fatal = 0;
