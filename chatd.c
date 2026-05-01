@@ -14,7 +14,6 @@
 #define ERROR_UNKNOWN_RECIPIENT 2
 #define ERROR_ILLEGAL_CHARACTER 3
 #define ERROR_TOO_LONG 4
-#define ERROR_OTHERS 5
 
 #define MAX_NAME_LEN 32
 #define MAX_STATUS_LEN 64
@@ -41,14 +40,12 @@ int total_clients = 0;
 pthread_mutex_t my_lock = PTHREAD_MUTEX_INITIALIZER;
 
 
-//reads the fields
-//include error checking with buff size
+//reads the fields - returns count, -1 on IO error, -2 if field is too long for buf
 int fill_message_helper(int fd, char *buf, int buf_size){
     char c;
     int i = 0;
-    //switched from while(read(fd, &c, 1) > 0) because we need to report -1
+    int overflow = 0;
     while(1){
-        // printf("in while. i = %d\n",i);
         int n = read(fd, &c, 1);
         if(n < 1){
             return -1;
@@ -59,36 +56,37 @@ int fill_message_helper(int fd, char *buf, int buf_size){
         if(i < buf_size){
             buf[i] = c;
             i++;
+        } else {
+            //field longer than expected - keep consuming until | so stream is positioned right
+            overflow = 1;
         }
     }
     buf[i] = '\0';
+    if(overflow) return -2;
     return i;
-
 }
-//read message off socket and fills Message struct.
-//fd is the socket to read from
-//message is what we filling out
+//read message off socket and fills Message struct
+//returns 0 OK, -1 on IO error/disconnect, -2 on malformed framing (err 0 territory)
 int fill_message(int fd, Message *message){
     char version[9];
     char length[9];
 
     message->body = NULL;
 
-    if(fill_message_helper(fd, version, 7) < 0){
-        return -1;
-    }
+    int r = fill_message_helper(fd, version, 7);
+    if(r < 0) return r;
     message->protocol = atoi(version);
 
-    if (fill_message_helper(fd, message->message_code, 3) < 0){
-         return -1;
-    }
-    if (fill_message_helper(fd, length, 7) < 0){
-        return -1;
-    }
+    r = fill_message_helper(fd, message->message_code, 3);
+    if(r < 0) return r;
+    //code must be exactly 3 chars per spec
+    if(r != 3) return -2;
+
+    r = fill_message_helper(fd, length, 7);
+    if(r < 0) return r;
     message->body_length = atoi(length);
-    //sanity check - cant be negative or above 5-digit cap
     if(message->body_length < 0 || message->body_length > MAX_BODY_LEN){
-        return -1;
+        return -2;
     }
     message->body = malloc(message->body_length + 1);
     if(message->body == NULL){
@@ -105,14 +103,7 @@ int fill_message(int fd, Message *message){
         }
         total_bytes += n;
     }
-
     message->body[message->body_length] = '\0';
-
-    if(message->body[message->body_length-1] != '|'){
-        free(message->body);
-        message->body = NULL;
-        return -1;  
-    }
     return 0;
 }
 
@@ -219,7 +210,6 @@ int valid_message(const char *s){
 
 //handles NAM - pick a screen name
 void handle_nam(int my_index, char *body){
-    printf("in handle_name\n");
     pthread_mutex_lock(&my_lock);
     int fd = clients[my_index].fd;
 
@@ -253,7 +243,6 @@ void handle_nam(int my_index, char *body){
 
 //handles SET - update status, broadcast if non-empty
 void handle_set(int my_index, char *body){
-    printf("in handle_set\n");
     pthread_mutex_lock(&my_lock);
     int fd = clients[my_index].fd;
 
@@ -281,17 +270,18 @@ void handle_set(int my_index, char *body){
 
 
 //handles MSG - forward to one user or broadcast to #all
-void handle_msg(int my_index, char *body){
-    printf("in handle_msg\n");
+//returns 0 OK, -1 if a fatal err was sent (caller should close)
+int handle_msg(int my_index, char *body){
     pthread_mutex_lock(&my_lock);
     int fd = clients[my_index].fd;
 
     char *fields[3];
     int n = split_fields(body, fields, 3);
     if(n < 3){
+        //MSG must have 3 fields - malformed is err 0, fatal
         send_error(fd, ERROR_UNREADABLE, "Unreadable");
         pthread_mutex_unlock(&my_lock);
-        return;
+        return -1;
     }
     //fields[0] is sender but we ignore it - cant let users masquerade
     char *recipient = fields[1];
@@ -299,19 +289,18 @@ void handle_msg(int my_index, char *body){
 
     int err = valid_message(text);
     if(err >= 0){
-        printf("error in sending message\n");
         if(err == ERROR_TOO_LONG){
             send_error(fd, err, "Too long");
         } else {
             send_error(fd, err, "Illegal character");
         }
         pthread_mutex_unlock(&my_lock);
-        return;
+        return 0;
     }
 
     if(strcmp(recipient, "#all") == 0){
         send_all(clients[my_index].name, "#all", text);
-    } 
+    }
     else {
         int idx = client_search(recipient);
         if(idx < 0){
@@ -321,12 +310,12 @@ void handle_msg(int my_index, char *body){
         }
     }
     pthread_mutex_unlock(&my_lock);
+    return 0;
 }
 
 
 //handles WHO - report on a single user or list everyone in #all
 void handle_who(int my_index, char *body){
-    printf("in handle_who\n");
     pthread_mutex_lock(&my_lock);
     int fd = clients[my_index].fd;
 
@@ -376,38 +365,27 @@ void send_fatal_error(int fd){
     pthread_mutex_unlock(&my_lock);
 }
 
-void print_message(Message *msg) {
-    if (msg == NULL) return;
-
-    printf("--- Message Details ---\n");
-    printf("Protocol:    %d\n", msg->protocol);
-    
-    // Using %.4s because message_code might not be null-terminated
-    printf("Code:        %.4s\n", msg->message_code);
-    
-    printf("Length:      %d\n", msg->body_length);
-    
-    // Only print the body if it's not a NULL pointer
-    if (msg->body != NULL) {
-        printf("Body:        %s\n", msg->body);
-    } else {
-        printf("Body:        (empty)\n");
-    }
-    printf("-----------------------\n");
-}
-
 //runs as a thread for each connected client
 void *client_handler(void *arg) {
     int my_index = *((int*)arg);
     free(arg);
 
+    //lock so realloc in main doesnt move clients out from under us
+    pthread_mutex_lock(&my_lock);
     int fd = clients[my_index].fd;
-    printf("in client handler\n");
+    pthread_mutex_unlock(&my_lock);
 
     while(1){
         Message message;
-        if(fill_message(fd, &message) < 0){
-            break; //socket closed or read failed
+        int r = fill_message(fd, &message);
+        if(r == -1){
+            break; //socket closed or read failed - just exit
+        }
+        if(r == -2){
+            //malformed framing - send err 0 and close
+            send_fatal_error(fd);
+            free(message.body);
+            break;
         }
 
         //version has to be 1, anything else is fatal
@@ -421,38 +399,31 @@ void *client_handler(void *arg) {
         //spec says every message ends with | so if its missing thats err 0
         if(message.body_length > 0 && message.body[message.body_length - 1] == '|'){
             message.body[message.body_length - 1] = '\0';
-        } 
+        }
         else {
             send_fatal_error(fd);
             free(message.body);
             break;
         }
 
-        print_message(&message);
-
         //need a name first - only NAM allowed before that
         pthread_mutex_lock(&my_lock);
         int has_name = clients[my_index].has_name;
         pthread_mutex_unlock(&my_lock);
-
-
         if(has_name == 0 && strcmp(message.message_code, "NAM") != 0){
-            pthread_mutex_lock(&my_lock);
-            send_error(fd, 5, "NAM needs to be set before anything");
-            pthread_mutex_unlock(&my_lock);
+            send_fatal_error(fd);
+            free(message.body);
+            break;
         }
 
+        int fatal = 0;
         if(strcmp(message.message_code, "NAM") == 0){
-            printf("In NAM if statement\n");
             handle_nam(my_index, message.body);
         } else if(strcmp(message.message_code, "SET") == 0){
-            printf("In SET if statement\n");
             handle_set(my_index, message.body);
         } else if(strcmp(message.message_code, "MSG") == 0){
-            printf("In MSG if statement\n");
-            handle_msg(my_index, message.body);
+            if(handle_msg(my_index, message.body) < 0) fatal = 1;
         } else if(strcmp(message.message_code, "WHO") == 0){
-            printf("In WHO if statement\n");
             handle_who(my_index, message.body);
         } else {
             //unknown code is fatal
@@ -462,10 +433,11 @@ void *client_handler(void *arg) {
         }
 
         free(message.body);
+        if(fatal) break;
     }
 
     close(fd);
-    printf("connection with %d closed\n",fd);
+
     pthread_mutex_lock(&my_lock);
     clients[my_index].is_connected = 0;
     pthread_mutex_unlock(&my_lock);
@@ -504,7 +476,7 @@ int main(int argc, char **argv){
     listen(fd, 10); 
     while (1) {
         int client_fd = accept(fd, NULL, NULL);
-        printf("Connected with client %d\n",client_fd);
+
         pthread_mutex_lock(&my_lock);
 
         total_clients++;
