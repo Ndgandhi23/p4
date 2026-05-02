@@ -2,6 +2,8 @@ Authors:
 - Asmi Narsay, netID: adn54 
 - Neil Gandhi, netID: ndg53
 
+NOTE: in class the Professor mentioned another error, erro 5, taking care of errors not mentioned in the outline. We have implemented this. 
+
 Testing Strategy:
 - The main thing we used for testing was the raw executable file given in Canvas
     - Using this, we were able to run all our tests and see the outcome of its results
@@ -47,6 +49,6 @@ Testing Strategy:
     
 - We also accounted for if the user doesnt not end the message with the terminating bar "|" it will result in an error 0
     1|NAM|3|Bob --> results in an error 0 and terminates connection
-    
+
 - We also accounted for it the user enters a length that is shorter than the actual message
     1|NAM|2|Bob| --> results in an error 0 and termination connection
