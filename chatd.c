@@ -19,7 +19,7 @@
 #define MAX_NAME_LEN 32
 #define MAX_STATUS_LEN 64
 #define MAX_MSG_LEN 80
-#define MAX_BODY_LEN 99999 //5-digit length field cap
+#define MAX_BODY_LEN 99999 // 5-digit length field cap
 
 typedef struct {
     int protocol;
@@ -46,6 +46,7 @@ int fill_message_helper(int fd, char *buf, int buf_size){
     char c;
     int i = 0;
     int overflow = 0;
+
     while(1){
         int n = read(fd, &c, 1);
         if(n < 1){
@@ -61,9 +62,12 @@ int fill_message_helper(int fd, char *buf, int buf_size){
             //field longer than expected - keep consuming until | so stream is positioned right
             overflow = 1;
         }
+
     }
     buf[i] = '\0';
-    if(overflow) return -2;
+    if(overflow){
+        return -2;
+    }
     return i;
 }
 //read message off socket and fills Message struct
@@ -75,20 +79,32 @@ int fill_message(int fd, Message *message){
     message->body = NULL;
 
     int r = fill_message_helper(fd, version, 7);
-    if(r < 0) return r;
+    if(r < 0){
+        return r;
+    }
+
     message->protocol = atoi(version);
 
     r = fill_message_helper(fd, message->message_code, 3);
-    if(r < 0) return r;
+    if(r < 0){
+        return r;
+    }
+
     //code must be exactly 3 chars per spec
-    if(r != 3) return -2;
+    if(r != 3){
+        return -2;
+    } 
 
     r = fill_message_helper(fd, length, 7);
-    if(r < 0) return r;
+    if(r < 0){
+        return r;
+    }
+
     message->body_length = atoi(length);
-    if(message->body_length < 0 || message->body_length > MAX_BODY_LEN){
+    if((message->body_length < 0) || (message->body_length > MAX_BODY_LEN)){
         return -2;
     }
+
     message->body = malloc(message->body_length + 1);
     if(message->body == NULL){
         return -1;
@@ -105,6 +121,11 @@ int fill_message(int fd, Message *message){
         total_bytes += n;
     }
     message->body[message->body_length] = '\0';
+    if(message->body[message->body_length-1] != '|'){
+        free(message->body);
+        message->body = NULL;
+        return -1;
+    }
     return 0;
 }
 
@@ -136,7 +157,7 @@ int split_fields(char *body, char **fields, int max_fields) {
     fields[0] = body;
     int count = 1;
     for(int i = 0; body[i] != '\0'; i++){
-        if(count < max_fields && body[i] == '|'){
+        if((count < max_fields) && (body[i] == '|')){
             body[i] = '\0';
             fields[count] = body + i + 1;
             count++;
@@ -148,7 +169,7 @@ int split_fields(char *body, char **fields, int max_fields) {
 //returns the index in clients[] or -1 if not found
 int client_search(const char *client_name){
     for(int i = 0; i < total_clients; i++){
-        if(clients[i].is_connected == 1 && clients[i].has_name == 1){
+        if((clients[i].is_connected == 1) && (clients[i].has_name == 1)){
             if(strcmp(clients[i].name, client_name) == 0){
                 return i;
             }
@@ -160,7 +181,7 @@ int client_search(const char *client_name){
 //sends a MSG to every connected client that has a name
 void send_all(const char *sender, const char *recipient, const char *body){
     for(int i = 0; i < total_clients; i++){
-        if(clients[i].is_connected == 1 && clients[i].has_name == 1){
+        if((clients[i].is_connected == 1) && (clients[i].has_name == 1)){
             send_message(clients[i].fd, sender, recipient, body);
         }
     }
@@ -170,8 +191,13 @@ void send_all(const char *sender, const char *recipient, const char *body){
 //name: 1-32 chars, letters/digits/-/_
 int valid_name(const char *s){
     int len = strlen(s);
-    if(len < 1) return ERROR_ILLEGAL_CHARACTER;
-    if(len > MAX_NAME_LEN) return ERROR_TOO_LONG;
+    if(len < 1){
+        return ERROR_ILLEGAL_CHARACTER;
+    }
+    if(len > MAX_NAME_LEN){
+        return ERROR_TOO_LONG;
+    } 
+
     for(int i = 0; i < len; i++){
         char c = s[i];
         if(!(isalnum((unsigned char)c) || c == '-' || c == '_')){
@@ -184,7 +210,9 @@ int valid_name(const char *s){
 //status: 0-64 chars, range 32-126
 int valid_status(const char *s){
     int len = strlen(s);
-    if(len > MAX_STATUS_LEN) return ERROR_TOO_LONG;
+    if(len > MAX_STATUS_LEN){
+        return ERROR_TOO_LONG;
+    } 
     for(int i = 0; i < len; i++){
         unsigned char c = (unsigned char)s[i];
         if(c < 32 || c > 126){
@@ -197,8 +225,13 @@ int valid_status(const char *s){
 //message body: 1-80 chars, range 32-126
 int valid_message(const char *s){
     int len = strlen(s);
-    if(len < 1) return ERROR_ILLEGAL_CHARACTER;
-    if(len > MAX_MSG_LEN) return ERROR_TOO_LONG;
+    if(len < 1){
+        return ERROR_ILLEGAL_CHARACTER;
+    } 
+    if(len > MAX_MSG_LEN){
+        return ERROR_TOO_LONG;
+    } 
+
     for(int i = 0; i < len; i++){
         unsigned char c = (unsigned char)s[i];
         if(c < 32 || c > 126){
@@ -227,13 +260,16 @@ void handle_nam(int my_index, char *body){
 
     //skip ourselves so renaming to current name doesnt count as a collision
     for(int i = 0; i < total_clients; i++){
-        if(i == my_index) continue;
-        if(clients[i].is_connected == 1 && clients[i].has_name == 1 && strcmp(clients[i].name, body) == 0){
+        if(i == my_index){
+            continue;
+        } 
+        if((clients[i].is_connected == 1) && (clients[i].has_name == 1) && (strcmp(clients[i].name, body) == 0)){
             send_error(fd, ERROR_NAME_IN_USE, "Name in use");
             pthread_mutex_unlock(&my_lock);
             return;
         }
     }
+
     strcpy(clients[my_index].name, body);
     clients[my_index].has_name = 1;
 
@@ -251,7 +287,8 @@ void handle_set(int my_index, char *body){
     if(err >= 0){
         if(err == ERROR_TOO_LONG){
             send_error(fd, err, "Too long");
-        } else {
+        } 
+        else {
             send_error(fd, err, "Illegal character");
         }
         pthread_mutex_unlock(&my_lock);
@@ -260,12 +297,13 @@ void handle_set(int my_index, char *body){
 
     strcpy(clients[my_index].status, body);
 
-    //only broadcast if status is non-empty (per spec)
+    //only broadcast if status is non-empty
     if(strlen(body) > 0){
         char text[200];
         snprintf(text, sizeof(text), "%s is now \"%s\"", clients[my_index].name, body);
         send_all("#all", "#all", text);
     }
+
     pthread_mutex_unlock(&my_lock);
 }
 
@@ -279,22 +317,24 @@ int handle_msg(int my_index, char *body){
     char *fields[3];
     int n = split_fields(body, fields, 3);
     if(n < 3){
-        //MSG must have 3 fields - malformed is err 0, fatal
+        // MSG must have 3 fields - malformed is err 0, fatal
         send_error(fd, ERROR_UNREADABLE, "Unreadable");
         pthread_mutex_unlock(&my_lock);
         return -1;
     }
-    //fields[0] is sender but we ignore it - cant let users masquerade
+    // fields[0] is sender but we ignore it
     char *recipient = fields[1];
     char *text = fields[2];
 
-    int err = valid_message(text);
-    if(err >= 0){
-        if(err == ERROR_TOO_LONG){
-            send_error(fd, err, "Too long");
-        } else {
-            send_error(fd, err, "Illegal character");
+    int error = valid_message(text);
+    if(error >= 0){
+        if(error == ERROR_TOO_LONG){
+            send_error(fd, error, "Too long");
+        } 
+        else {
+            send_error(fd, error, "Illegal character");
         }
+
         pthread_mutex_unlock(&my_lock);
         return 0;
     }
@@ -303,13 +343,15 @@ int handle_msg(int my_index, char *body){
         send_all(clients[my_index].name, "#all", text);
     }
     else {
-        int idx = client_search(recipient);
-        if(idx < 0){
+        int index = client_search(recipient);
+        if(index < 0){
             send_error(fd, ERROR_UNKNOWN_RECIPIENT, "Unknown recipient");
-        } else {
-            send_message(clients[idx].fd, clients[my_index].name, recipient, text);
+        } 
+        else {
+            send_message(clients[index].fd, clients[my_index].name, recipient, text);
         }
     }
+
     pthread_mutex_unlock(&my_lock);
     return 0;
 }
@@ -325,17 +367,23 @@ void handle_who(int my_index, char *body){
         char buf[100000];
         buf[0] = '\0';
         int first = 1;
+
         for(int i = 0; i < total_clients; i++){
-            if(clients[i].is_connected == 1 && clients[i].has_name == 1){
-                if(!first) strcat(buf, "\n");
+            if((clients[i].is_connected == 1) && (clients[i].has_name == 1)){
+                if(!first){
+                    strcat(buf, "\n");
+                }
+
                 first = 0;
                 strcat(buf, clients[i].name);
+
                 if(strlen(clients[i].status) > 0){
                     strcat(buf, ": ");
                     strcat(buf, clients[i].status);
                 }
             }
         }
+
         send_message(fd, "#all", clients[my_index].name, buf);
         pthread_mutex_unlock(&my_lock);
         return;
@@ -360,7 +408,7 @@ void handle_who(int my_index, char *body){
 
 
 //locks before send_error, used for the err 0 paths in client_handler
-void send_fatal_error(int fd){
+void send_error_zero(int fd){
     pthread_mutex_lock(&my_lock);
     send_error(fd, ERROR_UNREADABLE, "Unreadable");
     pthread_mutex_unlock(&my_lock);
@@ -376,33 +424,35 @@ void *client_handler(void *arg) {
     int fd = clients[my_index].fd;
     pthread_mutex_unlock(&my_lock);
 
+
     while(1){
         Message message;
         int r = fill_message(fd, &message);
         if(r == -1){
-            break; //socket closed or read failed - just exit
+            send_error_zero(fd);
+            break; //socket closed or read failed 
         }
         if(r == -2){
-            //malformed framing - send err 0 and close
-            send_fatal_error(fd);
+            //malformed framing so we gotta send error 0
+            send_error_zero(fd);
             free(message.body);
             break;
         }
 
-        //version has to be 1, anything else is fatal
+        //version has to be 1, anything else is error 0
         if(message.protocol != 1){
-            send_fatal_error(fd);
+            send_error_zero(fd);
             free(message.body);
             break;
         }
 
         //strip trailing | so handlers see clean fields
-        //spec says every message ends with | so if its missing thats err 0
+        //p4 outline says every message ends with | so if its missing thats error 0
         if(message.body_length > 0 && message.body[message.body_length - 1] == '|'){
             message.body[message.body_length - 1] = '\0';
         }
         else {
-            send_fatal_error(fd);
+            send_error_zero(fd);
             free(message.body);
             break;
         }
@@ -419,24 +469,32 @@ void *client_handler(void *arg) {
             continue;
         }
 
-        int fatal = 0;
+        int error = 0;
         if(strcmp(message.message_code, "NAM") == 0){
             handle_nam(my_index, message.body);
-        } else if(strcmp(message.message_code, "SET") == 0){
+        } 
+        else if(strcmp(message.message_code, "SET") == 0){
             handle_set(my_index, message.body);
-        } else if(strcmp(message.message_code, "MSG") == 0){
-            if(handle_msg(my_index, message.body) < 0) fatal = 1;
-        } else if(strcmp(message.message_code, "WHO") == 0){
+        } 
+        else if(strcmp(message.message_code, "MSG") == 0){
+            if(handle_msg(my_index, message.body) < 0){
+                error = 1;
+            }
+        } 
+        else if(strcmp(message.message_code, "WHO") == 0){
             handle_who(my_index, message.body);
-        } else {
+        } 
+        else {
             //unknown code is fatal
-            send_fatal_error(fd);
+            send_error_zero(fd);
             free(message.body);
             break;
         }
 
         free(message.body);
-        if(fatal) break;
+        if(error){
+            break;
+        }
     }
 
     close(fd);
@@ -449,10 +507,9 @@ void *client_handler(void *arg) {
 
 
 
-
 int main(int argc, char **argv){
     if(argc != 2){
-        fprintf(stderr, "usage: %s <port>\n", argv[0]);
+        fprintf(stderr, "not the right arguments, add port number%s\n", argv[0]);
         return -1;
     }
 
@@ -473,11 +530,12 @@ int main(int argc, char **argv){
     socket_address.sin_addr.s_addr = INADDR_ANY;
 
     if(bind(fd, (struct sockaddr*)&socket_address, sizeof(socket_address)) < 0){
-        perror("bind");
+        perror("error in binding");
         return -1;
     }
+
     listen(fd, 10); 
-    while (1) {
+    while (1){
         int client_fd = accept(fd, NULL, NULL);
 
         pthread_mutex_lock(&my_lock);
@@ -495,6 +553,7 @@ int main(int argc, char **argv){
             pthread_mutex_unlock(&my_lock);
             return -1;
         }
+        
         clients = temp;
         clients[total_clients-1] = newClient;
         int my_index = total_clients - 1;
